@@ -131,6 +131,11 @@ Cancel sign-in once and make sure that the login page displays an error.
 
 ## Validation and production
 
+Next.js and `eslint-config-next` are pinned to the same version.
+pnpm 12 requires dependencies to be at least 24 hours old by default.
+Version 16.4.2 meets that requirement without a release-age exception.
+When updating Next.js, update both packages and keep the release-age check enabled.
+
 Run these commands from the project root:
 
 ```powershell
