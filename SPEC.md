@@ -37,9 +37,17 @@ The long-term product can support other career writing and questions. Those capa
 | Language freshness | Flag related versions when their supporting facts change |
 | Deployment | A hosted website with multiple users and accounts |
 | Model access | The website supplies the model service |
-| Web stack | Next.js for the frontend and most web backend functions |
-| Agent stack | Python for the main agent logic and related services |
+| Web stack | Next.js with TypeScript for the frontend and web backend functions |
+| Package manager | pnpm, with its version pinned in `package.json` and dependencies locked in `pnpm-lock.yaml` |
+| UI stack | Tailwind CSS for styles and shadcn/ui for component source |
+| Agent stack | Server-side TypeScript in the same Next.js application. No separate Python service for now |
 | Database | PostgreSQL |
+| Authentication | Supabase Auth with Google and GitHub sign-in. No app-managed passwords or authentication email sender |
+| Content storage | PostgreSQL is the authoritative store for text and business state. Markdown does not require file storage |
+| File storage | Object storage holds generated PDFs and other binary artifacts, not a second editable copy of document text |
+| State ownership | The backend validates and commits changes. The frontend displays state and submits user intent |
+| Change representation | Versioned proposals contain candidate content. The backend computes differences for review |
+| Agent execution | Stateless server instances use externally persisted task and conversation state |
 | Agent framework | Undecided |
 | Specification language | English |
 
@@ -237,15 +245,25 @@ Direct user actions can include approval. For example, a save button can state t
 
 ### 7.3 Commit behavior
 
-The proposed implementation uses versioned approval proposals.
+The system uses versioned approval proposals.
 
 Each proposal must bind the user, project, operations, and expected record revisions. A server must evaluate ownership and revision conflicts before committing.
+
+For text changes, the backend stores the complete candidate content and computes a diff against the immutable base revision. A diff shows differences between two versions. A text patch alone is not the authoritative proposal.
+
+Approval must remain disabled until generation, validation, and proposal persistence succeed. Streamed partial text remains an unapproved draft.
+
+The frontend submits the proposal ID and the approval action. The backend commits the exact stored candidate after checking ownership, proposal status, and base revisions. Approval must not trigger regeneration.
+
+Once a proposal is ready for review, its content must not change. Requested edits create a new proposal and supersede the old one.
 
 The system must commit an approved batch completely or not at all. Partial application must not leave inconsistent facts or resume versions.
 
 Repeated approval requests must not create duplicate changes. A stale proposal must show a conflict and require a new review.
 
 The agent must not approve its own proposal. Hidden tool calls and conversation text cannot replace the user's approval action.
+
+Direct text edits submit the candidate content and base revision to the backend. A clearly labeled save action can approve that edit, but cannot bypass authorization or revision checks.
 
 ### 7.4 Export boundary
 
@@ -329,14 +347,18 @@ Next.js owns the website and most web backend functions:
 - Conversation, approval, source, and resume interfaces.
 - APIs for approved business content.
 - Approval commits and authorization.
-- Requests to the Python agent service.
+- Calls to server-side Agent modules.
 - Task progress delivery and export access.
 
 API means the interface through which services exchange requests.
 
-### 10.2 Python agent service
+The backend owns authoritative state, authorization, validation, revision checks, and commits. The frontend submits user intent and displays backend results.
 
-Python owns the agent workflow and related processing:
+The frontend can manage input, local edits, diff presentation, and previews. Client state and client-assembled stream text must not become the only record of a change.
+
+### 10.2 TypeScript Agent modules
+
+Server-side TypeScript modules in the Next.js application own the agent workflow and related processing:
 
 - Model calls and context assembly.
 - Source classification and fact extraction.
@@ -346,6 +368,8 @@ Python owns the agent workflow and related processing:
 
 The framework choice remains open. The specification does not require a custom agent loop or a named framework.
 
+The project root contains the single Next.js application and its configuration. Pages and route handlers live in `src/app`, and Agent modules live in `src/server/agent`. No monorepo wrapper or separate language server is required.
+
 The agent must produce structured results that a server validates. It must not execute unrestricted SQL or directly bypass approval rules.
 
 SQL is the language used to query PostgreSQL.
@@ -354,21 +378,69 @@ SQL is the language used to query PostgreSQL.
 
 PostgreSQL stores business records, conversation records, task records, approvals, and audit metadata.
 
-Next.js and Python must not maintain separate competing definitions of approved facts. Approved data has one authoritative representation.
+Store submitted source text and document bodies in text fields. Markdown can represent document content without requiring a filesystem or Blob storage.
+
+Store facts, evidence links, ownership, approval states, and revision relationships as structured data. A file-like editing experience does not require a file-based storage model.
+
+Web backend and Agent modules must not maintain separate competing definitions of approved facts. Approved data has one authoritative representation.
+
+Use object storage for generated PDFs and other binary artifacts. Store their ownership, storage references, and exact resume revisions in PostgreSQL.
+
+Do not maintain independently editable copies of the same document in PostgreSQL and object storage. Binary storage does not add file uploads to the first-release scope.
 
 Schema changes must use a controlled migration process. A migration is a versioned change to the database structure.
 
 ### 10.4 Service boundary
 
-The browser communicates with the Next.js application. The Python service requires authenticated server requests.
+The browser communicates with the Next.js application. Agent modules run only on the server and are not exposed directly to the browser.
 
-Next.js passes a server-established user identity and project scope. The Python service must not trust a user ID supplied in a chat message.
+Next.js route handlers must authenticate requests before calling Agent modules with a server-established user identity and project scope. Agent modules must not trust a user ID supplied in a chat message.
 
 Long tasks need durable task records and progress updates. Closing the browser must not incorrectly mark a running task as completed.
 
 Durable means that a record survives a process restart.
 
-The transport, worker mechanism, hosting platform, and PDF service location remain implementation decisions.
+Backend execution does not require every operation to become a background task. Reads, approval commits, and direct saves can use ordinary authenticated requests.
+
+The worker mechanism, hosting platform, and PDF service location remain implementation decisions. Vercel Functions is a candidate, not a confirmed hosting choice.
+
+### 10.5 Agent execution and progress
+
+Server instances can be stateless, but Agent tasks must have persisted state. Do not rely on process memory or a live browser connection for continuity.
+
+For each generation request, the backend authenticates the user, saves the message, creates a task, and loads authorized context. The Agent produces a candidate, and the backend validates and saves the proposal before approval.
+
+An Agent loop alternates model calls and tool execution until it reaches a result, needs user input, or reaches a configured limit. Limit steps, elapsed time, output size, and tool execution time.
+
+Tool inputs require structural validation. Tool access uses server-established identity and project scope. Agent tools can read authorized content and create proposals, but cannot commit business changes.
+
+When approval or clarification is required, persist the waiting state and end the current execution. A later authenticated request loads the saved state and continues. Do not keep a function open while waiting for a user.
+
+Persist completed steps and tool results during execution, not only after the final response. For database changes, commit the change and its execution record in one transaction.
+
+Use idempotency keys for operations with side effects. An idempotency key prevents a repeated request from repeating the same change. External operations need an equivalent retry safeguard.
+
+Use Server-Sent Events (SSE) to send progress from the backend to the frontend. Events can carry draft text, tool status, proposal readiness, and explicit errors.
+
+SSE is a delivery channel, not the task store. Mark partial output as generating or unapproved, and reload authoritative state from the backend after reconnecting.
+
+Initial recovery can restore saved progress and results without replaying every text fragment. Exact stream replay is a separate feature and does not replace task recovery.
+
+Browser disconnection must not imply task completion or cancellation. If work must continue independently or recover across function failures, use a durable workflow or queue.
+
+Function execution has a finite time limit even while streaming. Background callbacks do not remove that limit. Persist recoverable progress before the execution budget expires.
+
+### 10.6 Prompt caching
+
+Prompt caching reuses model-provider computation for repeated prompt content. It is an optional optimization, not conversation memory, business storage, or an authorization mechanism.
+
+Place stable instructions and tool definitions before changing messages and tool results. Keep prefix content and ordering stable where practical.
+
+The backend must assemble the correct authorized context even when the cache misses. Fact revisions must update that context, and cache keys must not replace ownership checks.
+
+After model selection, configure supported cache controls and measure actual cache usage. Cache lifetime, minimum input length, pricing, and privacy requirements depend on the provider and model.
+
+The Agent SDK, cache configuration, workflow engine, and stream replay storage remain undecided.
 
 ## 11. Proposed data model
 
@@ -383,10 +455,12 @@ This model defines necessary relationships. It does not prescribe final table na
 | FactRevision | Owner, structured claim, status, and supporting source spans |
 | ProjectFact | Association between a project and approved facts |
 | TargetJobRevision | Owner, JD text or source reference, and prior revision |
-| ChangeProposal | Owner, operations, expected revisions, and approval state |
+| ChangeProposal | Owner, project, operations, immutable base revisions, complete candidate content, and approval state |
 | ResumeVersion | Owner, project, language, content, parent, and approval metadata |
 | ResumeEvidence | Association between resume claims and fact revisions |
 | Task | Owner, scope, progress, status, error, and retry association |
+| TaskStep | Task, sequence, input revision references, result, status, and checkpoint time |
+| ToolExecution | Task, tool call ID, validated input, result, status, and idempotency key where needed |
 | Export | Owner, resume version, template revision, status, and storage reference |
 | AuditEvent | Owner, action, affected IDs, result, and time |
 
@@ -428,7 +502,7 @@ Every data access must enforce ownership. This includes conversations, source sp
 Required controls include:
 
 - Authentication and ownership enforcement on every relevant route and tool.
-- Authenticated communication between Next.js and Python.
+- Authenticated route handlers and server-established user scope for Agent calls.
 - Server-only storage of model credentials.
 - Private export storage or authenticated export delivery.
 - Authorization before creating a short-lived download link.
@@ -498,6 +572,13 @@ These criteria define observable release behavior. They are not claims about an 
 | AC-24 | User switches target jobs | The next proposal uses the selected job and does not modify another project |
 | AC-25 | A candidate remains unapproved | Copy and PDF controls do not treat it as an approved saved version |
 | AC-26 | User requests excluded capabilities | The agent explains the current scope and does not pretend to complete them |
+| AC-27 | User approves a generated text proposal | The backend commits the exact reviewed candidate without another model generation |
+| AC-28 | Generation is incomplete or validation fails | Partial output remains unapproved and cannot be committed |
+| AC-29 | User requests edits to a pending proposal | A new proposal requires review, and the previous proposal cannot commit |
+| AC-30 | Browser reconnects after generation or approval | The frontend restores persisted task, proposal, and version state from the backend |
+| AC-31 | A tool operation is retried after an interrupted response | The retry reuses its committed result or safely resumes without duplicate side effects |
+| AC-32 | User approval requires a later request | A new server instance can continue from persisted state without the original process |
+| AC-33 | Prompt caching misses or is disabled | Authorization, selected fact revisions, and approval behavior remain unchanged |
 
 ## 16. Validation and delivery plan
 
@@ -525,6 +606,8 @@ Use unit tests for revision rules, proposal application, and evidence references
 
 Use end-to-end tests for the conversation, approval, resume revision, and PDF workflow.
 
+Test immutable proposal content, incomplete generation, task recovery, tool retries, and continuation from a new server instance. Test cache misses without weakening context or authorization rules.
+
 Use repeated model evaluations for unsupported claims and contribution boundaries. A single successful response does not establish reliability.
 
 PDF tests must extract text and compare layout fixtures. Include visual review for Chinese fonts and page breaks.
@@ -551,8 +634,9 @@ These items remain unresolved. They must not be presented as user-approved choic
 | Decision | Required before |
 | --- | --- |
 | Agent framework or custom orchestration | Agent implementation |
+| Agent SDK, workflow or queue mechanism, and exact stream replay requirements | Task execution and recovery implementation |
+| Model-specific prompt cache configuration | Cache optimization and provider privacy review |
 | Model provider, model, and fallback policy | Model integration and privacy notice |
-| Authentication provider and recovery method | Account implementation |
 | Hosting platform and deployment regions | Production deployment |
 | PDF template, renderer, page size, and font licensing | PDF acceptance testing |
 | Input limits, model step limits, and per-user quotas | Hosted testing |
