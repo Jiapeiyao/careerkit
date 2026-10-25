@@ -1,0 +1,12 @@
+{
+	"mcpServers": {
+		"Prisma": {
+			"url": "https://mcp.prisma.io/mcp",
+			"type": "http"
+		},
+		"shadcn": {
+			"command": "npx",
+			"args": ["shadcn@latest", "mcp"]
+		}
+	}
+}
