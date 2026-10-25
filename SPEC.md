@@ -117,6 +117,7 @@ The bar scrolls with the page and uses the same left-right layout on mobile.
 - Signed-in users see an avatar that opens a menu with their name, email address, and sign-out action.
 - Missing or failed avatar images use the first letter of the user name, or a generic user icon when no name exists.
 - Account details load independently from the page content.
+- Navigation and return to the active tab refresh the account state without a full page reload.
 - Feature links and project switching are not part of the initial navigation bar.
 
 ### 4.2 First successful session

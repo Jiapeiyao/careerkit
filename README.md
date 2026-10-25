@@ -14,6 +14,7 @@ public/
 src/
   app/
     account/page.tsx
+    api/auth/account/route.ts
     api/health/route.ts
     auth/
       actions.ts
@@ -121,7 +122,11 @@ The `/account` page checks the user with Supabase before it displays account det
 Sign-out ends the session in the current browser.
 If Supabase cannot confirm sign-out, its client still clears the local session.
 The login page displays the failure and lets the user sign in again.
-The session refresh code in `src/proxy.ts` runs before all pages that display the shared header.
+The session verification and refresh code in `src/proxy.ts` runs before login and account pages.
+Public pages do not wait for Supabase.
+The header loads verified display fields from `GET /api/auth/account` after the page loads.
+That endpoint refreshes expired sessions and writes replacement cookies.
+Anonymous requests preserve the verification cookies for pending Google and GitHub sign-in.
 Private responses use `Cache-Control: private, no-store`.
 Future private pages and routes must verify the user and enforce ownership themselves.
 The proxy matcher excludes API routes and static assets.
@@ -163,6 +168,8 @@ The health route does not test a database or model provider.
 `pnpm test:auth` builds the app and tests authentication against a local mock of Supabase.
 The tests cover provider redirects, callbacks, protected pages, session refresh, sign-out, and the shared header.
 They also cover the login-page exception, 404 navigation, and visible authentication failures.
+Pending sign-in must survive navigation and account checks in another tab.
+Public pages must finish within 1500 milliseconds while a mock account lookup remains blocked.
 They do not contact Google, GitHub, or a real Supabase project.
 
 ## UI components
@@ -174,7 +181,11 @@ Anonymous users see a single "Sign in / Sign up" button, except on the login pag
 Signed-in users see an avatar menu with their name, email address, and a sign-out action.
 If an avatar image fails, the menu button shows the first letter of the name or a user icon.
 Account details load separately from page content.
+The account area shows a loading placeholder until its independent request completes.
+It refreshes on navigation, window focus, and return to a visible tab.
+Requests from previous navigation are cancelled so they cannot restore an old avatar.
 Authentication failures display an error instead of an anonymous account state.
+The Retry button repeats a failed account request.
 The header does not appear on HTTP API responses or when the root layout itself fails.
 
 Tailwind CSS uses the PostCSS plugin in `postcss.config.mjs`.

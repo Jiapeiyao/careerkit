@@ -1,20 +1,22 @@
 import { createServerClient } from "@supabase/ssr";
+import { isAuthSessionMissingError } from "@supabase/supabase-js";
 import { NextResponse, type NextRequest } from "next/server";
 import { getAuthConfig, getAuthCookieOptions } from "@/lib/supabase/config";
 import { isInvalidSession } from "@/lib/supabase/server";
 
 /**
  * Next.js 16 runs this entry point before routes selected by the matcher.
- * Refresh auth cookies here because Server Components cannot write them.
+ * Verify and refresh sessions before login and protected account pages.
+ * Public pages load account details separately, without waiting for Supabase.
  * Route handlers and Server Actions must still enforce their own access checks.
  */
 export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });
   const config = getAuthConfig();
   const pathname = request.nextUrl.pathname;
+  const accountPage = pathname === "/account" || pathname.startsWith("/account/");
 
-  // The callback exchanges its authorization code and writes its own session cookies.
-  if (config && pathname !== "/auth/callback") {
+  if (config && (pathname === "/login" || accountPage)) {
     const client = createServerClient(config.url, config.key, {
       cookieOptions: getAuthCookieOptions(),
       cookies: {
@@ -40,7 +42,8 @@ export async function proxy(request: NextRequest) {
     if (error && !isInvalidSession(error)) {
       console.error("Session verification failed:", error.code ?? error.name);
     }
-    if (error && isInvalidSession(error)) {
+    // A missing session is normal during OAuth; signing out would delete its PKCE verifier.
+    if (error && isInvalidSession(error) && !isAuthSessionMissingError(error)) {
       const { error: signOutError } = await client.auth.signOut({ scope: "local" });
       if (signOutError) console.error("Invalid session cleanup failed:", signOutError.code);
     }
@@ -48,7 +51,7 @@ export async function proxy(request: NextRequest) {
     // Redirect known auth states, but leave service failures for the page to report.
     let destination: string | null = null;
     if (pathname === "/login" && data.user) destination = "/account";
-    if ((pathname === "/account" || pathname.startsWith("/account/")) && !data.user && (!error || isInvalidSession(error))) {
+    if (accountPage && !data.user && (!error || isInvalidSession(error))) {
       destination = "/login";
     }
     if (destination) {
@@ -57,11 +60,11 @@ export async function proxy(request: NextRequest) {
       for (const cookie of response.cookies.getAll()) redirect.cookies.set(cookie);
       response = redirect;
     }
-  } else if (!config && (pathname === "/account" || pathname.startsWith("/account/"))) {
+  } else if (!config && accountPage) {
     response = NextResponse.redirect(new URL("/login", request.url));
   }
 
-  // All matched pages show account-specific UI; shared caches must not store it.
+  // Never cache auth redirects or responses that can update session cookies.
   response.headers.set("Cache-Control", "private, no-store");
   response.headers.set("Pragma", "no-cache");
   response.headers.set("Expires", "0");

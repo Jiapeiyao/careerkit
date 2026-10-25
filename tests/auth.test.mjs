@@ -36,6 +36,8 @@ let output = "";
 let refreshes = 0;
 let rejectSignOut = false;
 let rejectUserLookup = false;
+let userLookups = 0;
+let userLookupGate = null;
 const mock = createServer(async (request, response) => {
   response.setHeader("Content-Type", "application/json");
   if (request.url.startsWith("/auth/v1/token")) {
@@ -52,6 +54,9 @@ const mock = createServer(async (request, response) => {
       response.end(JSON.stringify({ code: "bad_code_verifier", msg: "Invalid code" }));
     }
   } else if (request.url === "/auth/v1/user") {
+    userLookups++;
+    mock.emit("user-lookup");
+    if (userLookupGate) await userLookupGate;
     if (rejectUserLookup) {
       response.statusCode = 503;
       response.end(JSON.stringify({ code: "test_unavailable", msg: "Auth unavailable" }));
@@ -181,53 +186,145 @@ function navigation(html) {
   return nav[1];
 }
 
-test("public pages and 404 share a header, and login hides its sign-in button", async () => {
+test("public pages and 404 share a header without reading sessions during rendering", async () => {
+  const before = userLookups;
   for (const route of ["/", "/missing-navigation-test"]) {
     const response = await fetch(`${origin}${route}`);
     assert.equal(response.status, route === "/" ? 200 : 404);
     const html = await response.text();
     const nav = navigation(html);
     assert.match(nav, /href="\/"/);
-    assert.match(html, /Sign in \/ Sign up/);
+    assert.match(nav, /Loading account/);
     assert.match(response.headers.get("cache-control"), /no-store/);
   }
+  assert.equal(userLookups, before);
   const login = await (await fetch(`${origin}/login`)).text();
   navigation(login);
   assert.doesNotMatch(login, /Sign in \/ Sign up/);
   assert.match(login, /Continue with Google/);
 });
 
-test("signed-in home and 404 show the account menu instead of a login button", async () => {
+test("the account endpoint returns verified display fields without exposing session tokens", async () => {
   const cookie = await signIn();
-  for (const route of ["/", "/missing-navigation-test"]) {
-    const response = await fetch(`${origin}${route}`, { headers: { Cookie: cookie } });
-    const html = await response.text();
-    navigation(html);
-    assert.match(html, /Open account menu/);
-    assert.doesNotMatch(html, /Sign in \/ Sign up/);
-    assert.match(response.headers.get("cache-control"), /no-store/);
+  const response = await fetch(`${origin}/api/auth/account`, { headers: { Cookie: cookie } });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    user: { name: null, email: user.email, avatar: null }, error: null,
+  });
+  assert.match(response.headers.get("cache-control"), /no-store/);
+});
+
+test("anonymous account reads return an uncached signed-out state without a remote lookup", async () => {
+  const before = userLookups;
+  const response = await fetch(`${origin}/api/auth/account`);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { user: null, error: null });
+  assert.match(response.headers.get("cache-control"), /private.*no-store/);
+  assert.equal(userLookups, before);
+});
+
+test("account display fields use verified metadata and reject invalid avatar URLs", async () => {
+  const cookie = await signIn();
+  const previous = user.user_metadata;
+  try {
+    for (const [metadata, expected] of [
+      [
+        { full_name: "  Review User  ", avatar_url: "javascript:alert(1)", picture: "https://example.com/avatar.png" },
+        { name: "Review User", email: user.email, avatar: "https://example.com/avatar.png" },
+      ],
+      [
+        { full_name: {}, name: "GitHub User", avatar_url: 123 },
+        { name: "GitHub User", email: user.email, avatar: null },
+      ],
+    ]) {
+      user.user_metadata = metadata;
+      const response = await fetch(`${origin}/api/auth/account`, { headers: { Cookie: cookie } });
+      assert.deepEqual(await response.json(), { user: expected, error: null });
+    }
+  } finally {
+    user.user_metadata = previous;
   }
 });
 
-test("header session reads refresh expired cookies even on the home page", async () => {
+test("the independent account endpoint refreshes expired cookies", async () => {
   const value = `base64-${Buffer.from(JSON.stringify(session(true))).toString("base64url")}`;
   const before = refreshes;
-  const response = await fetch(origin, { headers: { Cookie: `sb-127-auth-token=${value}` } });
-  assert.match(await response.text(), /Open account menu/);
+  const response = await fetch(`${origin}/api/auth/account`, { headers: { Cookie: `sb-127-auth-token=${value}` } });
+  assert.equal((await response.json()).user.email, user.email);
   assert.equal(refreshes, before + 1);
   assert.match(cookieHeader(response), /auth-token=/);
 });
 
-test("authentication outages display an error instead of a signed-out header", async () => {
+test("the account endpoint reports auth outages without blocking the homepage", async () => {
   const cookie = await signIn();
   rejectUserLookup = true;
   try {
-    const html = await (await fetch(origin, { headers: { Cookie: cookie } })).text();
-    assert.match(html, /Account unavailable/);
-    assert.doesNotMatch(html, /Sign in \/ Sign up/);
+    const response = await fetch(`${origin}/api/auth/account`, { headers: { Cookie: cookie } });
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), {
+      user: null, error: "Account details could not load. Please try again.",
+    });
+    assert.match(response.headers.get("cache-control"), /no-store/);
+    const home = await fetch(origin, { headers: { Cookie: cookie } });
+    assert.equal(home.status, 200);
+    assert.match(await home.text(), /Turn your career materials/);
   } finally {
     rejectUserLookup = false;
   }
+});
+
+test("public pages finish within 1500ms while account verification remains blocked", async () => {
+  const cookie = await signIn();
+  const before = userLookups;
+  let release;
+  userLookupGate = new Promise((resolve) => { release = resolve; });
+  const lookupStarted = once(mock, "user-lookup");
+  const account = fetch(`${origin}/api/auth/account`, { headers: { Cookie: cookie } });
+  try {
+    await lookupStarted;
+    for (const route of ["/", "/missing-navigation-test"]) {
+      const page = await fetch(`${origin}${route}`, {
+        headers: { Cookie: cookie }, signal: AbortSignal.timeout(1500),
+      });
+      navigation(await page.text());
+    }
+    assert.equal(userLookups, before + 1, "Page rendering must not start an auth lookup");
+  } finally {
+    userLookupGate = null;
+    release();
+    await account;
+  }
+});
+
+test("anonymous navigation and header reads preserve a pending OAuth verifier", async () => {
+  const login = await (await fetch(`${origin}/login`)).text();
+  const started = await submit("/login", actionFor(login, "Continue with Google"));
+  let cookie = cookieHeader(started);
+  assert.match(cookie, /code-verifier/);
+  for (const route of ["/", "/missing-navigation-test", "/login", "/account", "/api/auth/account"]) {
+    const response = await fetch(`${origin}${route}`, {
+      headers: { Cookie: cookie }, redirect: "manual",
+    });
+    const updates = response.headers.getSetCookie();
+    assert.ok(!updates.some((value) => /code-verifier/.test(value) && /Max-Age=0/i.test(value)),
+      `${route} must not cancel a pending OAuth login`);
+    const jar = new Map(cookie.split("; ").filter(Boolean).map((value) => {
+      const index = value.indexOf("=");
+      return [value.slice(0, index), value.slice(index + 1)];
+    }));
+    for (const value of updates) {
+      const pair = value.split(";")[0];
+      const index = pair.indexOf("=");
+      if (/Max-Age=0/i.test(value)) jar.delete(pair.slice(0, index));
+      else jar.set(pair.slice(0, index), pair.slice(index + 1));
+    }
+    cookie = [...jar].map(([name, value]) => `${name}=${value}`).join("; ");
+    assert.match(cookie, /code-verifier/);
+  }
+  const callback = await fetch(`${origin}/auth/callback?code=valid-code`, {
+    headers: { Cookie: cookie }, redirect: "manual",
+  });
+  assert.equal(callback.headers.get("location"), `${origin}/account`);
 });
 
 for (const provider of ["Google", "GitHub"]) {
@@ -298,6 +395,12 @@ test("an unverified cookie cannot grant account access", async () => {
   assert.equal(new URL(response.headers.get("location"), origin).href, `${origin}/login`);
   assert.doesNotMatch(await response.text(), /auth-test@example.com/);
   assert.match(response.headers.getSetCookie().join(";"), /Max-Age=0/i);
+  const header = await fetch(`${origin}/api/auth/account`, {
+    headers: { Cookie: `sb-127-auth-token=${value}` },
+  });
+  assert.equal(header.status, 200);
+  assert.deepEqual(await header.json(), { user: null, error: null });
+  assert.match(header.headers.getSetCookie().join(";"), /Max-Age=0/i);
 });
 
 test("sign-out errors are visible and successful sign-out clears the session", async () => {

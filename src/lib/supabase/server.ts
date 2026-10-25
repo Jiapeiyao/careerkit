@@ -32,15 +32,21 @@ export function isInvalidSession(error: { status?: number }) {
   return isAuthSessionMissingError(error) || [400, 401, 403].includes(error.status ?? 0);
 }
 
-export const getAuthState = cache(async () => {
+export async function readAuthState(writable = false) {
   await cookies();
   if (!getAuthConfig()) return { user: null, error: null };
 
-  const client = await createClient();
+  const client = await createClient(writable);
   const { data, error } = await client.auth.getUser();
   if (error && !isInvalidSession(error)) {
     console.error("Account verification failed:", error.code ?? error.name);
     return { user: null, error: "Account details could not load. Please try again." };
   }
+  if (writable && error && isInvalidSession(error) && !isAuthSessionMissingError(error)) {
+    const { error: signOutError } = await client.auth.signOut({ scope: "local" });
+    if (signOutError) console.error("Invalid session cleanup failed:", signOutError.code);
+  }
   return { user: data.user, error: null };
-});
+}
+
+export const getAuthState = cache(() => readAuthState());
