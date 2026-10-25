@@ -13,13 +13,21 @@ Use pnpm to manage dependencies, Tailwind CSS for styles, and shadcn/ui for UI c
 public/
 src/
   app/
+    account/page.tsx
     api/health/route.ts
+    auth/
+      actions.ts
+      callback/route.ts
     layout.tsx
+    login/page.tsx
     page.tsx
   components/
+    header-account.tsx
+    site-header.tsx
     ui/
   lib/
-    utils.ts
+    supabase/
+  proxy.ts
   server/
     agent/
 package.json
@@ -111,10 +119,13 @@ The `/auth/callback` route exchanges the authorization code for a cookie-based s
 Supabase verifies that the callback matches the browser that started sign-in.
 The `/account` page checks the user with Supabase before it displays account details.
 Sign-out ends the session in the current browser.
-The session refresh code in `src/proxy.ts` runs before the login and account pages.
+If Supabase cannot confirm sign-out, its client still clears the local session.
+The login page displays the failure and lets the user sign in again.
+The session refresh code in `src/proxy.ts` runs before all pages that display the shared header.
 Private responses use `Cache-Control: private, no-store`.
 Future private pages and routes must verify the user and enforce ownership themselves.
-Add future pages that read sessions to the proxy matcher.
+The proxy matcher excludes API routes and static assets.
+API routes that read sessions need their own session refresh and access checks.
 Do not use this sign-in integration as a substitute for database access rules.
 
 For deployment, set all three environment variables on the host.
@@ -150,10 +161,21 @@ The start command serves the production build.
 `GET /api/health` returns `{"status":"ok","service":"careerkit"}`.
 The health route does not test a database or model provider.
 `pnpm test:auth` builds the app and tests authentication against a local mock of Supabase.
-The tests cover provider redirects, callbacks, protected pages, session refresh, and sign-out.
+The tests cover provider redirects, callbacks, protected pages, session refresh, sign-out, and the shared header.
+They also cover the login-page exception, 404 navigation, and visible authentication failures.
 They do not contact Google, GitHub, or a real Supabase project.
 
 ## UI components
+
+The root layout displays a shared header on all ordinary pages, including the standard error and 404 pages.
+The header scrolls with the page and keeps the same layout on mobile.
+Its briefcase icon and CareerKit name link to the home page.
+Anonymous users see a single "Sign in / Sign up" button, except on the login page.
+Signed-in users see an avatar menu with their name, email address, and a sign-out action.
+If an avatar image fails, the menu button shows the first letter of the name or a user icon.
+Account details load separately from page content.
+Authentication failures display an error instead of an anonymous account state.
+The header does not appear on HTTP API responses or when the root layout itself fails.
 
 Tailwind CSS uses the PostCSS plugin in `postcss.config.mjs`.
 Global styles and theme variables live in `src/app/globals.css`.
@@ -166,7 +188,7 @@ pnpm dlx shadcn@latest add button
 ```
 
 Component source lives in `src/components/ui`.
-The `cn` helper in `src/lib/utils.ts` combines CSS classes.
+UI components use the `cn` package to combine CSS classes.
 Do not add a second package-manager lockfile.
 The `pnpm-workspace.yaml` file records approved dependency build scripts.
 It does not define additional applications.

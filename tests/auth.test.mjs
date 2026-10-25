@@ -35,6 +35,7 @@ let supabaseOrigin;
 let output = "";
 let refreshes = 0;
 let rejectSignOut = false;
+let rejectUserLookup = false;
 const mock = createServer(async (request, response) => {
   response.setHeader("Content-Type", "application/json");
   if (request.url.startsWith("/auth/v1/token")) {
@@ -51,6 +52,11 @@ const mock = createServer(async (request, response) => {
       response.end(JSON.stringify({ code: "bad_code_verifier", msg: "Invalid code" }));
     }
   } else if (request.url === "/auth/v1/user") {
+    if (rejectUserLookup) {
+      response.statusCode = 503;
+      response.end(JSON.stringify({ code: "test_unavailable", msg: "Auth unavailable" }));
+      return;
+    }
     if (request.headers.authorization === `Bearer ${session().access_token}`) {
       response.end(JSON.stringify(user));
     } else {
@@ -169,6 +175,61 @@ test("anonymous users cannot access the account page", async () => {
   assert.match(response.headers.get("cache-control"), /no-store/);
 });
 
+function navigation(html) {
+  const nav = html.match(/<nav\b[^>]*aria-label="Main navigation"[^>]*>([\s\S]*?)<\/nav>/);
+  assert.ok(nav, "Missing shared navigation");
+  return nav[1];
+}
+
+test("public pages and 404 share a header, and login hides its sign-in button", async () => {
+  for (const route of ["/", "/missing-navigation-test"]) {
+    const response = await fetch(`${origin}${route}`);
+    assert.equal(response.status, route === "/" ? 200 : 404);
+    const html = await response.text();
+    const nav = navigation(html);
+    assert.match(nav, /href="\/"/);
+    assert.match(html, /Sign in \/ Sign up/);
+    assert.match(response.headers.get("cache-control"), /no-store/);
+  }
+  const login = await (await fetch(`${origin}/login`)).text();
+  navigation(login);
+  assert.doesNotMatch(login, /Sign in \/ Sign up/);
+  assert.match(login, /Continue with Google/);
+});
+
+test("signed-in home and 404 show the account menu instead of a login button", async () => {
+  const cookie = await signIn();
+  for (const route of ["/", "/missing-navigation-test"]) {
+    const response = await fetch(`${origin}${route}`, { headers: { Cookie: cookie } });
+    const html = await response.text();
+    navigation(html);
+    assert.match(html, /Open account menu/);
+    assert.doesNotMatch(html, /Sign in \/ Sign up/);
+    assert.match(response.headers.get("cache-control"), /no-store/);
+  }
+});
+
+test("header session reads refresh expired cookies even on the home page", async () => {
+  const value = `base64-${Buffer.from(JSON.stringify(session(true))).toString("base64url")}`;
+  const before = refreshes;
+  const response = await fetch(origin, { headers: { Cookie: `sb-127-auth-token=${value}` } });
+  assert.match(await response.text(), /Open account menu/);
+  assert.equal(refreshes, before + 1);
+  assert.match(cookieHeader(response), /auth-token=/);
+});
+
+test("authentication outages display an error instead of a signed-out header", async () => {
+  const cookie = await signIn();
+  rejectUserLookup = true;
+  try {
+    const html = await (await fetch(origin, { headers: { Cookie: cookie } })).text();
+    assert.match(html, /Account unavailable/);
+    assert.doesNotMatch(html, /Sign in \/ Sign up/);
+  } finally {
+    rejectUserLookup = false;
+  }
+});
+
 for (const provider of ["Google", "GitHub"]) {
   test(`${provider} sign-in starts PKCE and uses the configured callback`, async () => {
     const html = await (await fetch(`${origin}/login`)).text();
@@ -246,8 +307,9 @@ test("sign-out errors are visible and successful sign-out clears the session", a
   rejectSignOut = true;
   try {
     const failed = await submit("/account", action, cookie);
-    assert.equal(failed.headers.get("location"), "/account?error=signout");
-    const error = await fetch(`${origin}/account?error=signout`, { headers: { Cookie: cookie } });
+    assert.equal(failed.headers.get("location"), "/login?error=signout");
+    assert.match(failed.headers.getSetCookie().join(";"), /Max-Age=0/i);
+    const error = await fetch(`${origin}/login?error=signout`, { headers: { Cookie: cookieHeader(failed) } });
     assert.match(await error.text(), /Sign-out failed/);
   } finally {
     rejectSignOut = false;

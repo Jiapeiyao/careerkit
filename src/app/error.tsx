@@ -2,7 +2,7 @@
 
 export default function ErrorPage({ reset }: { reset: () => void }) {
   return (
-    <main className="flex min-h-svh flex-col items-center justify-center gap-4 p-6">
+    <main className="flex flex-1 flex-col items-center justify-center gap-4 p-6">
       <h1 className="text-2xl font-semibold">This page could not load.</h1>
       <p role="alert">Please try again. If the problem continues, contact the site owner.</p>
       <button

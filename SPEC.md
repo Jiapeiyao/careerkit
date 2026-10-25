@@ -106,6 +106,19 @@ The proposed layout contains:
 
 This layout supports the conversation. It does not require users to follow a separate wizard.
 
+#### Shared top navigation
+
+Every ordinary page shares a top navigation bar, including the login page.
+Standard page errors and 404 pages retain the bar when the root layout can render.
+The bar scrolls with the page and uses the same left-right layout on mobile.
+
+- The left side contains a briefcase icon and the CareerKit name, linked to the home page.
+- Anonymous users see one sign-in and registration button on the right, except on the login page.
+- Signed-in users see an avatar that opens a menu with their name, email address, and sign-out action.
+- Missing or failed avatar images use the first letter of the user name, or a generic user icon when no name exists.
+- Account details load independently from the page content.
+- Feature links and project switching are not part of the initial navigation bar.
+
 ### 4.2 First successful session
 
 1. The user signs in and starts a conversation.
