@@ -2,7 +2,7 @@ import "server-only";
 
 import { createServerClient, type SetAllCookies } from "@supabase/ssr";
 import { isAuthSessionMissingError } from "@supabase/supabase-js";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { connection } from "next/server";
 import { cache } from "react";
 import { getAuthConfig, getAuthCookieOptions } from "./config";
@@ -14,7 +14,7 @@ export async function createClient(writable = false) {
 
   const store = await cookies();
   return createServerClient(config.url, config.key, {
-    cookieOptions: getAuthCookieOptions(),
+    cookieOptions: getAuthCookieOptions(await headers()),
     cookies: {
       getAll: () => store.getAll(),
       ...(writable ? {

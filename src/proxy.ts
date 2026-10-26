@@ -18,7 +18,7 @@ export async function proxy(request: NextRequest) {
 
   if (config && (pathname === "/login" || accountPage)) {
     const client = createServerClient(config.url, config.key, {
-      cookieOptions: getAuthCookieOptions(),
+      cookieOptions: getAuthCookieOptions(request.headers),
       cookies: {
         getAll: () => request.cookies.getAll(),
         setAll(values, headers) {

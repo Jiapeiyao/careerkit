@@ -12,9 +12,28 @@ export function getAuthConfig() {
   return { url, key };
 }
 
-export function getSiteUrl() {
-  const value = process.env.SITE_URL;
-  if (!value) throw new Error("Set SITE_URL before using authentication.");
+export function getSiteUrl(requestHeaders: Pick<Headers, "get">) {
+  let value = process.env.SITE_URL;
+  if (!value) {
+    const host = requestHeaders.get("host");
+    if (!host) throw new Error("Missing Host header for authentication.");
+    if (!/^[a-z0-9.:[\]-]+$/i.test(host)) {
+      throw new Error("Invalid Host header for authentication.");
+    }
+    const url = new URL(`https://${host}`);
+    if (url.host !== host.toLowerCase() || url.username || url.password ||
+      url.pathname !== "/" || url.search || url.hash) {
+      throw new Error("Invalid Host header for authentication.");
+    }
+    const local = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+    if (process.env.VERCEL === "1") {
+      value = url.origin;
+    } else if (local) {
+      value = `http://${host}`;
+    } else {
+      throw new Error("Set SITE_URL for authentication outside Vercel or localhost.");
+    }
+  }
 
   const url = new URL(value);
   const local = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
@@ -27,11 +46,11 @@ export function getSiteUrl() {
   return url.origin;
 }
 
-export function getAuthCookieOptions() {
+export function getAuthCookieOptions(requestHeaders: Pick<Headers, "get">) {
   return {
     httpOnly: true,
     sameSite: "lax" as const,
-    secure: new URL(getSiteUrl()).protocol === "https:",
+    secure: new URL(getSiteUrl(requestHeaders)).protocol === "https:",
     path: "/",
   };
 }

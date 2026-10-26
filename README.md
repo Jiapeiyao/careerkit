@@ -75,11 +75,18 @@ Application data storage remains unchanged.
 2. Copy `.env.example` to `.env.local`.
 3. Set `NEXT_PUBLIC_SUPABASE_URL` to the project URL from the Supabase Connect dialog.
 4. Set `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` to the publishable key from that dialog.
-5. Set `SITE_URL` to `http://localhost:3000` for local development.
-6. In Supabase Authentication URL Configuration, set the Site URL to the same address.
-7. Add `http://localhost:3000/auth/callback` to the Supabase redirect URL allowlist.
-8. Enable Google and GitHub in Supabase Authentication Sign In / Providers.
-9. Restart the development server after you change environment variables.
+5. In Supabase Authentication URL Configuration, set the Site URL to `http://localhost:3000`.
+6. Add `http://localhost:3000/auth/callback` to the Supabase redirect URL allowlist.
+7. Enable Google and GitHub in Supabase Authentication Sign In / Providers.
+8. Restart the development server after you change environment variables.
+
+`SITE_URL` is optional on Vercel and localhost.
+Vercel supplies the request domain, so callbacks use the domain that started sign-in, with HTTPS.
+Local development uses HTTP and the requested localhost or loopback port.
+Forwarded host and protocol headers are not used to choose authentication destinations.
+Outside Vercel and localhost, set `SITE_URL` to the public HTTPS origin without a path.
+An explicit `SITE_URL` overrides automatic detection in every environment.
+Only set `VERCEL=1` through Vercel's automatic system environment variables, not on a self-hosted server.
 
 Never use a Supabase secret key or service-role key in this application.
 Keep provider client secrets in the Supabase dashboard, not in this repository.
@@ -133,11 +140,13 @@ The proxy matcher excludes API routes and static assets.
 API routes that read sessions need their own session refresh and access checks.
 Do not use this sign-in integration as a substitute for database access rules.
 
-For deployment, set all three environment variables on the host.
-Set `SITE_URL` to the public HTTPS origin without a path.
+For Vercel deployment, set the two Supabase environment variables on the host.
+No manual `SITE_URL` is required; keep Vercel's automatic system environment variables enabled.
 Update the Supabase Site URL and allowlist with the exact production `/auth/callback` URL.
+For preview sign-in, also allow your team's Vercel preview domains in Supabase.
+Use the scoped pattern described in the [Supabase redirect URL guide](https://supabase.com/docs/guides/auth/redirect-urls#vercel-preview-urls), not a wildcard for all Vercel sites.
 Update the provider configuration for the production site.
-Callback destinations use `SITE_URL`, not user-supplied redirect parameters.
+Callback destinations use the detected site origin or an explicit `SITE_URL`, never user-supplied redirect parameters.
 Disable the Supabase Email provider if you want to allow only Google and GitHub sign-in.
 
 Test both providers with real accounts before launch.

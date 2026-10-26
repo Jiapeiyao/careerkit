@@ -15,7 +15,7 @@ export async function GET(request: Request) {
       destination = "/account";
     }
   }
-  const response = NextResponse.redirect(new URL(destination, getSiteUrl()), 303);
+  const response = NextResponse.redirect(new URL(destination, getSiteUrl(request.headers)), 303);
   response.headers.set("Cache-Control", "private, no-store");
   return response;
 }

@@ -1,10 +1,27 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import path from "node:path";
 import { after, before, test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
+import { runInNewContext } from "node:vm";
+import ts from "typescript";
+
+const configCode = ts.transpileModule(
+  readFileSync(new URL("../src/lib/supabase/config.ts", import.meta.url), "utf8"),
+  { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } },
+).outputText;
+
+function authConfig(env = {}) {
+  const exports = {};
+  runInNewContext(configCode, {
+    exports, process: { env }, URL,
+    require: (name) => { assert.equal(name, "server-only"); },
+  });
+  return exports;
+}
 
 const user = {
   id: "12345678-1234-1234-1234-123456789abc",
@@ -138,7 +155,8 @@ before(async () => {
       ...process.env,
       NEXT_PUBLIC_SUPABASE_URL: supabaseOrigin,
       NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "test-publishable-key",
-      SITE_URL: origin,
+      SITE_URL: "",
+      VERCEL: "",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -327,8 +345,47 @@ test("anonymous navigation and header reads preserve a pending OAuth verifier", 
   assert.equal(callback.headers.get("location"), `${origin}/account`);
 });
 
+test("site URLs use Vercel request domains without a manual environment variable", () => {
+  const config = authConfig({ VERCEL: "1" });
+  for (const host of ["careerkit.example", "careerkit-preview-team.vercel.app"]) {
+    const headers = new Headers({
+      host, "x-forwarded-host": "evil.example", "x-forwarded-proto": "http",
+    });
+    assert.equal(config.getSiteUrl(headers), `https://${host}`);
+    assert.equal(config.getAuthCookieOptions(headers).secure, true);
+  }
+});
+
+test("local origins work without SITE_URL and ignore forwarded headers", () => {
+  const config = authConfig();
+  for (const host of ["localhost:3000", "127.0.0.1:4321", "[::1]:3000"]) {
+    const headers = new Headers({ host, "x-forwarded-host": "evil.example" });
+    assert.equal(config.getSiteUrl(headers), `http://${host}`);
+    assert.equal(config.getAuthCookieOptions(headers).secure, false);
+  }
+});
+
+test("other hosts require SITE_URL and malformed request hosts fail explicitly", () => {
+  assert.throws(() => authConfig().getSiteUrl(new Headers({ host: "example.com" })), /Set SITE_URL/);
+  const config = authConfig({ VERCEL: "1" });
+  assert.throws(() => config.getSiteUrl(new Headers()), /Missing Host/);
+  for (const host of ["evil.example/path", "user@evil.example", "evil.example?next=1", "evil.example,other.example"]) {
+    assert.throws(() => config.getSiteUrl(new Headers({ host })), /Invalid/);
+  }
+});
+
+test("explicit SITE_URL overrides automatic detection and retains validation", () => {
+  const headers = new Headers({ host: "preview.vercel.app" });
+  const config = authConfig({ VERCEL: "1", SITE_URL: "https://careerkit.example" });
+  assert.equal(config.getSiteUrl(headers), "https://careerkit.example");
+  assert.equal(config.getAuthCookieOptions(headers).secure, true);
+  for (const value of ["http://example.com", "https://example.com/path", "https://user@example.com"]) {
+    assert.throws(() => authConfig({ SITE_URL: value }).getSiteUrl(headers), /SITE_URL/);
+  }
+});
+
 for (const provider of ["Google", "GitHub"]) {
-  test(`${provider} sign-in starts PKCE and uses the configured callback`, async () => {
+  test(`${provider} sign-in starts PKCE and infers the callback without SITE_URL`, async () => {
     const html = await (await fetch(`${origin}/login`)).text();
     const response = await submit("/login", actionFor(html, `Continue with ${provider}`));
     assert.equal(response.status, 303);

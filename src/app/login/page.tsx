@@ -33,7 +33,7 @@ async function LoginOptions({ searchParams }: Pick<PageProps<"/login">, "searchP
   const params = await searchParams;
   const configured = Boolean(getAuthConfig());
   const message = !configured
-    ? "Sign-in is not configured. The site owner must set the Supabase environment variables and SITE_URL."
+    ? "Sign-in is not configured. The site owner must set the Supabase environment variables."
     : error ?? (params.error === "callback"
       ? "Sign-in did not complete. Please try again."
       : params.error === "signin" ? "Sign-in failed. Please try again."

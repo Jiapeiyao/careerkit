@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getSiteUrl } from "@/lib/supabase/config";
@@ -10,7 +11,7 @@ async function signIn(provider: "google" | "github") {
   const { data, error } = await client.auth.signInWithOAuth({
     provider,
     options: {
-      redirectTo: `${getSiteUrl()}/auth/callback`,
+      redirectTo: `${getSiteUrl(await headers())}/auth/callback`,
       skipBrowserRedirect: true,
     },
   });
