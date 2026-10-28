@@ -13,7 +13,7 @@ import { mockAccount } from "@/lib/mock-account";
 export function HeaderAccount() {
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger asChild>
+      <DropdownMenuTrigger>
         <Button variant="ghost" size="icon" className="size-11 rounded-full" aria-label="Open account menu">
           <Avatar size="lg">
             <AvatarFallback>{mockAccount.name[0]}</AvatarFallback>
@@ -30,7 +30,7 @@ export function HeaderAccount() {
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
         <DropdownMenuGroup>
-          <DropdownMenuItem asChild className="min-h-11">
+          <DropdownMenuItem className="min-h-11">
             <Link href="/account">
               <UserRoundIcon aria-hidden="true" />
               Your account
