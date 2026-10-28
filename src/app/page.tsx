@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { mockAccount } from "@/lib/mock-account";
 import {
   Card,
   CardContent,
@@ -19,17 +20,17 @@ export default function Home() {
             Turn your career materials into a resume for your target role.
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="flex flex-col items-start gap-4">
           <p className="text-base leading-relaxed text-muted-foreground">
-            Sign in with Google or GitHub to create your account.
+            You are using the demo account: {mockAccount.name}.
             Conversations, Agent workflows, and resume exports are not
             available yet.
           </p>
           <Link
-            href="/login"
+            href="/account"
             className="inline-flex min-h-11 items-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
           >
-            Sign in
+            View demo account
           </Link>
         </CardContent>
       </Card>
